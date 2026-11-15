@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Journal - Performance Analytics</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root { --primary: #2563eb; --success: #059669; --danger: #dc2626; --bg: #f8fafc; }
+        body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: #1e293b; padding: 20px; }
+        .container { max-width: 1100px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+
+        .header-flex { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 25px; border-bottom: 1px solid #e2e8f0; padding-bottom: 15px; }
+        .date-range { color: #64748b; font-size: 0.9rem; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+        .date-input { border: 1px solid #e2e8f0; border-radius: 6px; padding: 4px 8px; font-family: inherit; color: #475569; background: #fff; font-size: 0.85rem; }
+
+        .dashboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 25px; }
+        .card { background: #fff; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; text-align: center; }
+        .card h3 { font-size: 0.7rem; color: #64748b; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 0.05em; }
+        .card div { font-size: 1.4rem; font-weight: 700; }
+
+        .chart-container { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; margin-bottom: 25px; height: 400px; }
+
+        #importBtnContainer { display: none; text-align: center; padding: 20px; border: 2px dashed #cbd5e0; border-radius: 10px; margin-bottom: 20px; }
+        .import-btn { background: var(--primary); color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+
+        .pnl-pos { color: var(--success); font-weight: 600; }
+        .pnl-neg { color: var(--danger); font-weight: 600; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header-flex">
+        <h2 style="margin:0;">📊 Performance Analytics</h2>
+        <div id="dateRangeDisplay" class="date-range">
+            <input type="date" id="startDate" class="date-input">
+            <span>—</span>
+            <input type="date" id="endDate" class="date-input">
+        </div>
+    </div>
+
+    <div id="importBtnContainer">
+        <p style="margin-top:0; font-size: 0.9rem;">Browser security blocked auto-loading <b>2026.tlg</b>.</p>
+        <input type="file" id="fileInput" style="display:none" accept=".tlg">
+        <button class="import-btn" onclick="document.getElementById('fileInput').click()">Manually Select 2026.tlg</button>
+    </div>
+
+    <div class="dashboard">
+        <div class="card"><h3>Total Return</h3><div id="totalPnl">0.00%</div></div>
+        <div class="card"><h3>Days Traded</h3><div id="daysTraded">0</div></div>
+        <div class="card"><h3>Executions</h3><div id="totalExecs">0</div></div>
+        <div class="card"><h3>Total Shares Traded</h3><div id="totalShares">0</div></div>
+    </div>
+
+    <div class="chart-container">
+        <canvas id="pnlChart"></canvas>
+    </div>
+</div>
+
+<script>
+    let pnlChart = null;
+    const ACCOUNT_SIZE = 70000;
+    let globalContent = '';
+
+    document.addEventListener('DOMContentLoaded', async () => {
+        document.getElementById('startDate').addEventListener('change', () => filterAndRender());
+        document.getElementById('endDate').addEventListener('change', () => filterAndRender());
+
+        try {
+            const res = await fetch('percentage.tlg');
+            if (!res.ok) throw new Error();
+            processData(await res.text());
+        } catch (e) {
+            document.getElementById('importBtnContainer').style.display = 'block';
+        }
+    });
+
+    document.getElementById('fileInput').addEventListener('change', (e) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            processData(ev.target.result);
+            document.getElementById('importBtnContainer').style.display = 'none';
+        };
+        reader.readAsText(e.target.files[0]);
+    });
+
+function processData(content) {
+    globalContent = content;
+    const lines = content.split('\n').filter(l => l.trim() !== '');
+    let allDates = [];
+
+    lines.forEach(line => {
+        const cols = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
+        if (!cols || cols.length < 4) return;
+        const dateTimeStr = cols[1].replace(/"/g, '');
+        const [date] = dateTimeStr.split(', ');
+        if (date) allDates.push(date);
+    });
+
+    if (allDates.length > 0) {
+        const toTimestamp = (str) => {
+            if (str.includes('/')) {
+                const [m, d, y] = str.split('/');
+                return new Date(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}T00:00:00`).getTime();
+            }
+            return new Date(`${str}T00:00:00`).getTime();
+        };
+
+        const toISODate = (str) => {
+            if (str.includes('/')) {
+                const [m, d, y] = str.split('/');
+                return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+            }
+            return str;
+        };
+
+        allDates.sort((a, b) => toTimestamp(a) - toTimestamp(b));
+
+        document.getElementById('startDate').value = toISODate(allDates[0]);
+        document.getElementById('endDate').value = toISODate(allDates[allDates.length - 1]);
+    }
+
+    filterAndRender();
+}
+
+function filterAndRender() {
+    if (!globalContent) return;
+
+    const lines = globalContent.split('\n').filter(l => l.trim() !== '');
+    let inventory = {};
+    let runningPnl = 0;
+    let totalShares = 0;
+    let executionCount = 0;
+    let activeDays = new Set();
+    let chartData = [0], chartLabels = ['Start'];
+
+    const startVal = document.getElementById('startDate').value;
+    const endVal = document.getElementById('endDate').value;
+
+    const toTimestamp = (str) => {
+        if (!str) return 0;
+        if (str.includes('/')) {
+            const [m, d, y] = str.split('/');
+            return new Date(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}T00:00:00`).getTime();
+        }
+        return new Date(`${str}T00:00:00`).getTime();
+    };
+
+    const startLimit = startVal ? new Date(`${startVal}T00:00:00`).getTime() : -Infinity;
+    const endLimit = endVal ? new Date(`${endVal}T23:59:59`).getTime() : Infinity;
+
+    let latestRates = { USDCAD: 1.35, USDJPY: 150.0, USDCHF: 0.90 };
+
+    lines.forEach(line => {
+        const cols = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
+        if (!cols || cols.length < 4) return;
+
+        const asset = cols[0].replace(/"/g, '');
+        const dateTimeStr = cols[1].replace(/"/g, '');
+        let qty = parseFloat(cols[2]);
+        const price = parseFloat(cols[3]);
+
+        const [date, time] = dateTimeStr.split(', ');
+
+        if (asset === 'USDCAD') latestRates['USDCAD'] = price;
+        if (asset === 'USDJPY') latestRates['USDJPY'] = price;
+        if (asset === 'USDCHF') latestRates['USDCHF'] = price;
+
+        const currentTimestamp = toTimestamp(date);
+        const isWithinRange = (currentTimestamp >= startLimit && currentTimestamp <= endLimit);
+
+        if (isWithinRange) {
+            activeDays.add(date);
+            totalShares += Math.abs(qty);
+            executionCount++;
+        }
+
+        if (!inventory[asset]) inventory[asset] = [];
+
+        let tradePnl = 0;
+        const isForex = asset.length === 6 && /^[A-Z]{6}$/.test(asset) && !asset.startsWith("MES");
+        const multiplier = asset.startsWith("MES") ? 5.0 : (isForex ? 100000 : 1.0);
+
+        while (qty !== 0 && inventory[asset].length > 0 &&
+               (inventory[asset][0].qty > 0) !== (qty > 0)) {
+
+            let op = inventory[asset][0];
+            let matchQty = Math.min(Math.abs(qty), Math.abs(op.qty));
+            let unitPnl = op.qty > 0 ? (price - op.price) : (op.price - price);
+
+            if (isForex) {
+                let quoteCurrency = asset.substring(3, 6);
+                let pnlInQuote = (unitPnl * matchQty) * multiplier;
+
+                if (quoteCurrency === 'USD') {
+                    tradePnl += pnlInQuote;
+                } else if (quoteCurrency === 'JPY') {
+                    tradePnl += pnlInQuote / (latestRates['USDJPY'] || price);
+                } else if (quoteCurrency === 'CAD') {
+                    tradePnl += pnlInQuote / (latestRates['USDCAD'] || price);
+                } else if (quoteCurrency === 'CHF') {
+                    tradePnl += pnlInQuote / (latestRates['USDCHF'] || price);
+                } else {
+                    tradePnl += pnlInQuote;
+                }
+            } else {
+                tradePnl += (unitPnl * matchQty) * multiplier;
+            }
+
+            op.qty += (op.qty > 0 ? -matchQty : matchQty);
+            qty += (qty > 0 ? -matchQty : matchQty);
+
+            if (Math.abs(op.qty) < 0.000001) inventory[asset].shift();
+        }
+
+        if (Math.abs(qty) > 0.000001) {
+            inventory[asset].push({ qty, price });
+        }
+
+        if (tradePnl !== 0) {
+            if (isWithinRange) {
+                runningPnl += tradePnl;
+                let currentPct = (runningPnl / ACCOUNT_SIZE) * 100;
+                chartData.push(Number(currentPct.toFixed(3)));
+                chartLabels.push(date);
+            }
+        }
+    });
+
+    updateUI(runningPnl, activeDays.size, totalShares, executionCount, chartLabels, chartData);
+}
+
+    function updateUI(totalPnl, daysCount, totalShares, executionCount, labels, data) {
+        const percentageGain = (totalPnl / ACCOUNT_SIZE) * 100;
+
+        document.getElementById('totalPnl').innerText = `${percentageGain.toFixed(2)}%`;
+        document.getElementById('totalPnl').className = totalPnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+
+        document.getElementById('daysTraded').innerText = daysCount;
+        document.getElementById('totalExecs').innerText = executionCount;
+        document.getElementById('totalShares').innerText = totalShares.toLocaleString();
+
+        updateChart(labels, data);
+    }
+
+    function updateChart(labels, data) {
+        const ctx = document.getElementById('pnlChart').getContext('2d');
+        if (pnlChart) pnlChart.destroy();
+        pnlChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Return %',
+                    data: data,
+                    borderColor: '#2563eb',
+                    backgroundColor: 'rgba(37, 99, 235, 0.1)',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: (context) => `Return: ${context.parsed.y.toFixed(2)}%`
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        ticks: { callback: v => v.toFixed(2) + '%' },
+                        grid: { color: '#f1f5f9' }
+                    },
+                    x: {
+                        display: true,
+                        grid: { display: false },
+                        ticks: { autoSkip: true, maxTicksLimit: 10, maxRotation: 0 }
+                    }
+                }
+            }
+        });
+    }
+</script>
+</body>
+</html>
